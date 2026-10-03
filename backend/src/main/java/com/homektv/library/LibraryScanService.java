@@ -8,6 +8,7 @@ import com.homektv.media.MediaProbe;
 import com.homektv.media.MediaProbeException;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -20,6 +21,9 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 曲库扫描入库管线（P1.1-P1.5，详设§9.3）。
@@ -50,6 +54,16 @@ public class LibraryScanService {
     private final SongFileRepository fileRepo;
     private final AssetWriter assetWriter;
 
+    private final ExecutorService libraryScanExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread thread = new Thread(r, "ktv-library-scan");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private final AtomicReference<LibraryScanProgress> libraryScanProgress =
+            new AtomicReference<>(LibraryScanProgress.idle());
+    private final Object libraryScanLock = new Object();
+    private boolean libraryScanScheduled;
+
     public LibraryScanService(AppProperties props, FFprobeService ffprobe, TagReader tagReader,
                               SongRepository songRepo, SongFileRepository fileRepo, AssetWriter assetWriter) {
         this.props = props;
@@ -61,15 +75,71 @@ public class LibraryScanService {
     }
 
     public record ScanResult(int scanned, int added, int updated, int skipped, int unrecognized) {}
+    public record LibraryScanProgress(boolean running, int total, int completed, String currentFile,
+                                      int added, int updated, int skipped, int unrecognized,
+                                      OffsetDateTime startedAt, OffsetDateTime finishedAt) {
+        static LibraryScanProgress idle() {
+            return new LibraryScanProgress(false, 0, 0, null, 0, 0, 0, 0, null, null);
+        }
+    }
     public record IngestResult(boolean imported, Long songId, Long songFileId) {}
 
-    /** 全量/增量扫描曲库根目录 */
+    /** 全量/增量扫描现有 KTV 曲库。只读取媒体并维护数据库索引，不移动/复制媒体文件。 */
     public ScanResult scanAll() {
+        synchronized (this) {
+            return scanAllInternal(false);
+        }
+    }
+
+    /** 后台启动现有曲库扫描，供管理界面轮询进度。 */
+    public LibraryScanProgress startLibraryScan() {
+        synchronized (libraryScanLock) {
+            LibraryScanProgress current = libraryScanProgress.get();
+            if (libraryScanScheduled || current.running()) return current;
+
+            libraryScanScheduled = true;
+            OffsetDateTime startedAt = OffsetDateTime.now();
+            libraryScanProgress.set(new LibraryScanProgress(
+                    true, 0, 0, null, 0, 0, 0, 0, startedAt, null));
+
+            libraryScanExecutor.submit(() -> {
+                try {
+                    synchronized (LibraryScanService.this) {
+                        scanAllInternal(true);
+                    }
+                } catch (RuntimeException e) {
+                    LibraryScanProgress failed = libraryScanProgress.get();
+                    libraryScanProgress.set(new LibraryScanProgress(
+                            false, failed.total(), failed.completed(), null,
+                            failed.added(), failed.updated(), failed.skipped() + 1, failed.unrecognized(),
+                            failed.startedAt(), OffsetDateTime.now()));
+                    log.error("现有曲库扫描失败：{}", e.getMessage(), e);
+                } finally {
+                    synchronized (libraryScanLock) {
+                        libraryScanScheduled = false;
+                    }
+                }
+            });
+            return libraryScanProgress.get();
+        }
+    }
+
+    public LibraryScanProgress getLibraryScanProgress() {
+        return libraryScanProgress.get();
+    }
+
+    private ScanResult scanAllInternal(boolean reportProgress) {
+        OffsetDateTime startedAt = OffsetDateTime.now();
         Path root = Path.of(props.getKtvLibraryPath());
         if (!Files.isDirectory(root)) {
             log.warn("曲库目录不存在：{}", root);
+            if (reportProgress) {
+                libraryScanProgress.set(new LibraryScanProgress(
+                        false, 0, 0, null, 0, 0, 0, 0, startedAt, OffsetDateTime.now()));
+            }
             return new ScanResult(0, 0, 0, 0, 0);
         }
+
         List<Path> files = new ArrayList<>();
         try {
             Files.walkFileTree(root, new SimpleFileVisitor<>() {
@@ -84,7 +154,19 @@ public class LibraryScanService {
         }
 
         int added = 0, updated = 0, skipped = 0, unrecognized = 0;
-        for (Path file : files) {
+        if (reportProgress) {
+            libraryScanProgress.set(new LibraryScanProgress(
+                    true, files.size(), 0, null, 0, 0, 0, 0, startedAt, null));
+        }
+
+        for (int index = 0; index < files.size(); index++) {
+            Path file = files.get(index);
+            String relative = root.relativize(file).toString();
+            if (reportProgress) {
+                libraryScanProgress.set(new LibraryScanProgress(
+                        true, files.size(), index, relative,
+                        added, updated, skipped, unrecognized, startedAt, null));
+            }
             try {
                 IngestOutcome outcome = ingest(file);
                 switch (outcome) {
@@ -97,10 +179,22 @@ public class LibraryScanService {
                 log.warn("入库失败，跳过：{} - {}", file, e.getMessage());
                 skipped++;
             }
+            if (reportProgress) {
+                libraryScanProgress.set(new LibraryScanProgress(
+                        true, files.size(), index + 1, relative,
+                        added, updated, skipped, unrecognized, startedAt, null));
+            }
+        }
+
+        ScanResult result = new ScanResult(files.size(), added, updated, skipped, unrecognized);
+        if (reportProgress) {
+            libraryScanProgress.set(new LibraryScanProgress(
+                    false, files.size(), files.size(), null,
+                    added, updated, skipped, unrecognized, startedAt, OffsetDateTime.now()));
         }
         log.info("扫描完成：共 {} 文件，新增 {}，更新 {}，跳过 {}，未识别 {}",
                 files.size(), added, updated, skipped, unrecognized);
-        return new ScanResult(files.size(), added, updated, skipped, unrecognized);
+        return result;
     }
 
     enum IngestOutcome { ADDED, UPDATED, SKIPPED, UNRECOGNIZED }
@@ -152,8 +246,9 @@ public class LibraryScanService {
         String sidecarLyricText = readValidSidecarLyric(sidecarLyric);
         String lrcTitle = lrcTag(sidecarLyricText, "ti");
         String lrcArtist = lrcTag(sidecarLyricText, "ar");
-        String artistHint = sourceFile != null && sourceFile.getParent() != null
-                ? sourceFile.getParent().getFileName().toString()
+        Path artistHintPath = sourceFile != null ? sourceFile : file;
+        String artistHint = artistHintPath.getParent() != null
+                ? artistHintPath.getParent().getFileName().toString()
                 : null;
         FilenameParser.ExtendedMeta filenameMeta =
                 FilenameParser.parseExtended(file.getFileName().toString(), artistHint);
@@ -366,6 +461,11 @@ public class LibraryScanService {
         } catch (IOException e) {
             return 0;
         }
+    }
+
+    @PreDestroy
+    void shutdownLibraryScanExecutor() {
+        libraryScanExecutor.shutdownNow();
     }
 
     private record IngestState(IngestOutcome outcome, Long songId, Long songFileId) {}

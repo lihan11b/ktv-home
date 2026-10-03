@@ -82,6 +82,12 @@ class LibraryScanIntegrationTest {
         run("ffmpeg", "-y",
                 "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
                 libraryDir.resolve("刘若英 - 后来.mp3").toString());
+
+        // 结构化文件名 + 歌手父目录，用于验证直接扫描 /music 时的 artistHint。
+        Path artistDir = Files.createDirectories(libraryDir.resolve("A-Lin"));
+        run("ffmpeg", "-y",
+                "-f", "lavfi", "-i", "sine=frequency=660:duration=2",
+                artistDir.resolve("A-Lin-给我一个理由忘记-国语-流行.mp3").toString());
     }
 
     @Autowired LibraryScanService scanService;
@@ -128,6 +134,23 @@ class LibraryScanIntegrationTest {
         List<SongFile> ktvFiles = fileRepo.findBySongIdOrderByPriorityDesc(qingtian.getId());
         assertThat(ktvFiles).isNotEmpty();
         assertThat(ktvFiles.get(0).getPriority()).isEqualTo(100); // KTV 优先级最高
+    }
+
+    @Test
+    void directLibraryScanUsesParentFolderAsArtistHintWithoutMovingFile() {
+        assumeTrue(ffmpegAvailable, "ffmpeg 不可用，跳过");
+
+        Path media = libraryDir.resolve("A-Lin")
+                .resolve("A-Lin-给我一个理由忘记-国语-流行.mp3");
+        scanService.scanAll();
+
+        Song song = songRepo.findAll().stream()
+                .filter(s -> s.getTitle().equals("给我一个理由忘记"))
+                .findFirst().orElseThrow();
+        assertThat(song.getArtist()).isEqualTo("A-Lin");
+        assertThat(song.getLanguage()).isEqualTo("国语");
+        assertThat(song.getTags()).containsExactly("流行");
+        assertThat(Files.isRegularFile(media)).isTrue();
     }
 
     @Test

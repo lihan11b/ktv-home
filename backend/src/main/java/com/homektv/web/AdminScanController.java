@@ -94,6 +94,20 @@ public class AdminScanController {
     }
 
     /**
+     * 后台扫描 /music 现有曲库。该流程只读取媒体并更新索引，不移动、复制或转码媒体文件。
+     */
+    @PostMapping("/library-scan/start")
+    public LibraryScanService.LibraryScanProgress startLibraryScan() {
+        return scanService.startLibraryScan();
+    }
+
+    /** 获取现有曲库扫描进度。 */
+    @GetMapping("/library-scan/progress")
+    public LibraryScanService.LibraryScanProgress libraryScanProgress() {
+        return scanService.getLibraryScanProgress();
+    }
+
+    /**
      * 分页查询源库文件列表，支持关键词、状态、格式分析等筛选条件。
      *
      * Paginated query of the source library file list, with filters for keyword, status, and format analysis.

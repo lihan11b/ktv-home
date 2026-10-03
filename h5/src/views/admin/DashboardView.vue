@@ -1,6 +1,6 @@
 <template>
   <AdminLayout active="dashboard">
-    <header class="page-head"><div><h1>仪表盘</h1><p>扫描源路径并查看曲库、转码与播放服务状态</p></div><button class="primary" :disabled="scanning" @click="scan">{{ scanning ? '扫描中…' : '扫描源路径' }}</button></header>
+    <header class="page-head"><div><h1>仪表盘</h1><p>扫描源路径或现有曲库，并查看转码与播放服务状态</p></div><div class="head-actions"><button class="secondary" :disabled="scanning || libraryScanning" @click="scanLibrary">{{ libraryScanning ? '索引中…' : '扫描现有曲库' }}</button><button class="primary" :disabled="scanning || libraryScanning" @click="scan">{{ scanning ? '扫描中…' : '扫描源路径' }}</button></div></header>
     <!-- 统计卡片 / Stats cards -->
     <section class="stats"><article><span>原始素材</span><strong>{{ sourceTotal }}</strong><small>/source-music</small></article><article><span>KTV曲库</span><strong>{{ d.totalSongs ?? 0 }}</strong><small>/music，可点歌</small></article><article><span>待转码</span><strong>{{ pendingCount }}</strong><small>等待批量转码入库</small></article><article><span>未识别</span><strong>{{ d.unrecognizedCount ?? 0 }}</strong><small>需补录元数据</small></article></section>
     <!-- 扫描进度 / Scan progress -->
@@ -9,9 +9,17 @@
       <div class="track"><i :style="{width:`${scanPercent}%`}"></i></div>
       <div class="progress-meta"><span>已处理 {{ scanProgress.completed || 0 }} / {{ scanProgress.total || 0 }}</span><span>直接移动 {{ scanProgress.copied || 0 }}</span><span>待转码 {{ scanProgress.pendingTranscode || 0 }}</span><span>重复 {{ duplicateCount }}</span><span>未识别 {{ scanProgress.unrecognized || 0 }}</span><span :class="{'failed':scanProgress.failed}">失败 {{ scanProgress.failed || 0 }}</span></div>
     </section>
+    <!-- 现有曲库索引进度：只读取 /music，不移动媒体文件 -->
+    <section v-if="libraryScanning || libraryScanResult" class="scan-progress" :class="{complete:!libraryScanning}">
+      <div class="progress-head"><div><strong>{{ libraryScanning ? '正在扫描现有曲库' : '现有曲库扫描完成' }}</strong><span v-if="libraryScanning">{{ libraryScanProgress.currentFile || '正在读取 /music 文件列表…' }}</span><span v-else>{{ libraryScanResult.finishedAt ? `完成于 ${formatTime(libraryScanResult.finishedAt)}` : '' }}</span></div><b>{{ libraryScanPercent }}%</b></div>
+      <div class="track"><i :style="{width:`${libraryScanPercent}%`}"></i></div>
+      <div class="progress-meta"><span>已处理 {{ libraryScanProgress.completed || 0 }} / {{ libraryScanProgress.total || 0 }}</span><span>新增 {{ libraryScanProgress.added || 0 }}</span><span>更新 {{ libraryScanProgress.updated || 0 }}</span><span>跳过 {{ libraryScanProgress.skipped || 0 }}</span><span>未识别 {{ libraryScanProgress.unrecognized || 0 }}</span></div>
+      <div class="safe-note">只读取 /music 并建立或更新索引；不会移动、复制或转码媒体文件。</div>
+    </section>
     <!-- 运行状态面板 / Status panel -->
     <section class="panel"><div class="panel-head"><strong>运行状态</strong><button class="text-btn" @click="load">刷新</button></div><table><thead><tr><th>模块</th><th>当前状态</th><th>详情</th><th>操作</th></tr></thead><tbody>
-      <tr><td><strong>源路径扫描</strong><small>分析、去重、兼容文件直接移动入库</small></td><td><span class="status green">{{ scanning ? '扫描中' : '就绪' }}</span></td><td>兼容文件扫描后移入 KTV 曲库；需转码文件只进入待处理列表。</td><td><button class="link" @click="scan" :disabled="scanning">重新扫描</button></td></tr>
+      <tr><td><strong>源路径扫描</strong><small>分析、去重、兼容文件直接移动入库</small></td><td><span class="status green">{{ scanning ? '扫描中' : '就绪' }}</span></td><td>兼容文件扫描后移入 KTV 曲库；需转码文件只进入待处理列表。</td><td><button class="link" @click="scan" :disabled="scanning || libraryScanning">重新扫描</button></td></tr>
+      <tr><td><strong>现有曲库扫描</strong><small>/music，只建立索引</small></td><td><span class="status" :class="libraryScanning?'blue':'green'">{{ libraryScanning ? '扫描中' : '就绪' }}</span></td><td>递归读取 /music（包括只读挂载目录），更新歌曲索引，不移动、复制或转码媒体文件。</td><td><button class="link" @click="scanLibrary" :disabled="scanning || libraryScanning">扫描现有曲库</button></td></tr>
       <tr><td><strong>批量转码</strong><small>原始音乐管理任务</small></td><td><span class="status" :class="progress.running?'blue':'neutral'">{{ progress.running ? '进行中' : '空闲' }}</span></td><td>{{ progress.running ? `${progress.completed}/${progress.total}，当前：${progress.currentFile || '准备中'}` : lastProgressText }}</td><td><router-link class="link" :to="{name:'admin-source-library'}">查看进度</router-link></td></tr>
       <tr><td><strong>播放服务</strong><small>TV 与手机点歌</small></td><td><span class="status green">{{ queueState }}</span></td><td>当前连接 {{ d.connectedClients ?? 0 }} 台客户端，正式曲库 KTV {{ d.ktvCount||0 }} / MV {{ d.mvCount||0 }} / 音频 {{ d.audioCount||0 }}。</td><td><router-link class="link" :to="{name:'admin-ktv-library'}">管理曲库</router-link></td></tr>
     </tbody></table></section>
@@ -29,7 +37,8 @@ import api from '../../api/client'
 import AdminLayout from './AdminLayout.vue'
 import { alertDialog } from '../../composables/useDialog'
 const d=ref({}),queue=ref({}),progress=ref({}),scanning=ref(false),scanResult=ref(null),scanProgress=ref({}),sourceTotal=ref(0),pendingCount=ref(0)
-let scanTimer=null
+const libraryScanning=ref(false),libraryScanResult=ref(null),libraryScanProgress=ref({})
+let scanTimer=null,libraryScanTimer=null
 /**
  * 播放队列当前状态的中文映射。
  *
@@ -48,6 +57,7 @@ const lastProgressText=computed(()=>progress.value.finishedAt?`上次完成：�
  * Scan progress percentage (0–100), computed from completed/total count.
  */
 const scanPercent=computed(()=>scanProgress.value.total?Math.round((scanProgress.value.completed||0)*100/scanProgress.value.total):(scanning.value?0:100))
+const libraryScanPercent=computed(()=>libraryScanProgress.value.total?Math.round((libraryScanProgress.value.completed||0)*100/libraryScanProgress.value.total):(libraryScanning.value?0:100))
 /**
  * 重复文件总数（源路径重复 + 输出路径重复）。
  *
@@ -63,7 +73,7 @@ const duplicateCount=computed(()=>(scanProgress.value.skippedSourceDuplicate||0)
  * if a scan is running, or shows the result if one has finished.
  * @returns {Promise<void>}
  */
-async function load(){const [status,q,p,sources,pending,sp]=await Promise.all([api.adminStatus().catch(()=>({})),api.getQueue().catch(()=>({})),api.adminSourceTranscodeProgress().catch(()=>({})),api.adminSourceLibrary({page:0,size:1}).catch(()=>({})),api.adminSourceLibrary({status:'pending',page:0,size:1}).catch(()=>({})),api.adminScanProgress().catch(()=>({}))]);d.value=status;queue.value=q;progress.value=p;sourceTotal.value=sources.total||0;pendingCount.value=pending.total||0;scanProgress.value=sp;if(sp.running){scanning.value=true;startPolling()}else if(sp.finishedAt){scanResult.value=sp}}
+async function load(){const [status,q,p,sources,pending,sp,lsp]=await Promise.all([api.adminStatus().catch(()=>({})),api.getQueue().catch(()=>({})),api.adminSourceTranscodeProgress().catch(()=>({})),api.adminSourceLibrary({page:0,size:1}).catch(()=>({})),api.adminSourceLibrary({status:'pending',page:0,size:1}).catch(()=>({})),api.adminScanProgress().catch(()=>({})),api.adminLibraryScanProgress().catch(()=>({}))]);d.value=status;queue.value=q;progress.value=p;sourceTotal.value=sources.total||0;pendingCount.value=pending.total||0;scanProgress.value=sp;libraryScanProgress.value=lsp;if(sp.running){scanning.value=true;startPolling()}else if(sp.finishedAt){scanResult.value=sp}if(lsp.running){libraryScanning.value=true;startLibraryPolling()}else if(lsp.finishedAt){libraryScanResult.value=lsp}}
 
 /**
  * 启动扫描进度轮询（每秒一次）。
@@ -78,6 +88,10 @@ function startPolling(){if(!scanTimer)scanTimer=setInterval(pollScan,1000)}
  * Stop polling scan progress and clear the timer.
  */
 function stopPolling(){if(scanTimer){clearInterval(scanTimer);scanTimer=null}}
+
+function startLibraryPolling(){if(!libraryScanTimer)libraryScanTimer=setInterval(pollLibraryScan,1000)}
+function stopLibraryPolling(){if(libraryScanTimer){clearInterval(libraryScanTimer);libraryScanTimer=null}}
+async function pollLibraryScan(){const previous=libraryScanning.value;const value=await api.adminLibraryScanProgress().catch(()=>libraryScanProgress.value);libraryScanProgress.value=value;libraryScanning.value=!!value.running;if(previous&&!value.running){libraryScanResult.value=value;stopLibraryPolling();await load()}}
 
 /**
  * 轮询扫描进度；检测到扫描结束时自动停止轮询并刷新仪表盘数据。
@@ -96,7 +110,8 @@ async function pollScan(){const previous=scanning.value;const value=await api.ad
  * No-op if a scan is already running.
  * @returns {Promise<void>}
  */
-async function scan(){if(scanning.value)return;try{scanProgress.value=await api.adminStartScan();scanning.value=true;scanResult.value=null;startPolling()}catch(e){await alertDialog(e.message||'扫描失败')}}
+async function scan(){if(scanning.value||libraryScanning.value)return;try{scanProgress.value=await api.adminStartScan();scanning.value=true;scanResult.value=null;startPolling()}catch(e){await alertDialog(e.message||'扫描失败')}}
+async function scanLibrary(){if(scanning.value||libraryScanning.value)return;try{libraryScanProgress.value=await api.adminStartLibraryScan();libraryScanning.value=true;libraryScanResult.value=null;startLibraryPolling()}catch(e){await alertDialog(e.message||'现有曲库扫描失败')}}
 
 /**
  * 将 ISO 时间字符串格式化为中文本地时间。
@@ -109,8 +124,8 @@ function formatTime(value){return new Date(value).toLocaleString('zh-CN',{hour12
 /** 挂载时加载仪表盘数据。 / Load dashboard data on mount. */
 onMounted(load)
 /** 卸载时停止轮询。 / Stop polling on unmount. */
-onUnmounted(stopPolling)
+onUnmounted(()=>{stopPolling();stopLibraryPolling()})
 </script>
 <style scoped>
-.page-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.page-head h1{font-size:22px}.page-head p{color:#64748b;font-size:13px;margin-top:6px}.primary{height:36px;padding:0 15px;border-radius:6px;background:#2563eb;color:#fff;font-size:13px}.primary:disabled{opacity:.5}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}.stats article{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:16px}.stats span,.stats small{display:block;color:#64748b;font-size:12px}.stats strong{display:block;font-size:26px;margin:8px 0 6px}.stats small{color:#94a3b8}.scan-progress{padding:14px 16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;margin-bottom:14px;color:#1e40af}.scan-progress.complete{background:#f0fdf4;border-color:#bbf7d0;color:#166534}.progress-head{display:flex;align-items:center;justify-content:space-between;gap:16px}.progress-head div{min-width:0}.progress-head strong,.progress-head span{display:block}.progress-head span{margin-top:4px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.progress-head b{font-size:18px}.track{height:7px;margin:12px 0 9px;background:#dbeafe;border-radius:4px;overflow:hidden}.complete .track{background:#dcfce7}.track i{display:block;height:100%;background:#2563eb;transition:width .25s}.complete .track i{background:#16a34a}.progress-meta{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:12px}.progress-meta .failed{color:#b91c1c;font-weight:700}.panel{background:#fff;border:1px solid #e2e8f0;border-radius:8px}.panel-head{display:flex;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #e2e8f0}.text-btn,.link{color:#2563eb;font-size:12px}.link:disabled{color:#94a3b8}table{width:100%;border-collapse:collapse;font-size:12px}th{padding:11px 14px;text-align:left;background:#f8fafc;color:#64748b}td{padding:13px 14px;border-top:1px solid #eef2f7;color:#475569}td strong,td small{display:block}td small{color:#94a3b8;margin-top:4px}.status{display:inline-flex;padding:3px 8px;border-radius:999px;font-weight:600}.green{background:#dcfce7;color:#166534}.blue{background:#dbeafe;color:#1d4ed8}.neutral{background:#f1f5f9;color:#475569}@media(max-width:900px){.stats{grid-template-columns:1fr 1fr}.panel{overflow:auto}table{min-width:760px}}
+.page-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.head-actions{display:flex;gap:8px}.page-head h1{font-size:22px}.page-head p{color:#64748b;font-size:13px;margin-top:6px}.primary{height:36px;padding:0 15px;border-radius:6px;background:#2563eb;color:#fff;font-size:13px}.primary:disabled{opacity:.5}.secondary{height:36px;padding:0 15px;border-radius:6px;background:#fff;color:#2563eb;border:1px solid #93c5fd;font-size:13px}.secondary:disabled{opacity:.5}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}.stats article{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:16px}.stats span,.stats small{display:block;color:#64748b;font-size:12px}.stats strong{display:block;font-size:26px;margin:8px 0 6px}.stats small{color:#94a3b8}.scan-progress{padding:14px 16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;margin-bottom:14px;color:#1e40af}.scan-progress.complete{background:#f0fdf4;border-color:#bbf7d0;color:#166534}.progress-head{display:flex;align-items:center;justify-content:space-between;gap:16px}.progress-head div{min-width:0}.progress-head strong,.progress-head span{display:block}.progress-head span{margin-top:4px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.progress-head b{font-size:18px}.track{height:7px;margin:12px 0 9px;background:#dbeafe;border-radius:4px;overflow:hidden}.complete .track{background:#dcfce7}.track i{display:block;height:100%;background:#2563eb;transition:width .25s}.complete .track i{background:#16a34a}.progress-meta{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:12px}.safe-note{margin-top:8px;font-size:12px;color:#475569}.progress-meta .failed{color:#b91c1c;font-weight:700}.panel{background:#fff;border:1px solid #e2e8f0;border-radius:8px}.panel-head{display:flex;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #e2e8f0}.text-btn,.link{color:#2563eb;font-size:12px}.link:disabled{color:#94a3b8}table{width:100%;border-collapse:collapse;font-size:12px}th{padding:11px 14px;text-align:left;background:#f8fafc;color:#64748b}td{padding:13px 14px;border-top:1px solid #eef2f7;color:#475569}td strong,td small{display:block}td small{color:#94a3b8;margin-top:4px}.status{display:inline-flex;padding:3px 8px;border-radius:999px;font-weight:600}.green{background:#dcfce7;color:#166534}.blue{background:#dbeafe;color:#1d4ed8}.neutral{background:#f1f5f9;color:#475569}@media(max-width:900px){.stats{grid-template-columns:1fr 1fr}.panel{overflow:auto}table{min-width:760px}}
 </style>
