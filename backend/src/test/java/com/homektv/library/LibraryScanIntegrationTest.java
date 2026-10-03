@@ -39,11 +39,13 @@ class LibraryScanIntegrationTest {
                     .withDatabaseName("ktv").withUsername("ktv").withPassword("ktv");
 
     static final Path libraryDir;
+    static final Path formalLibraryDir;
     static boolean ffmpegAvailable;
 
     static {
         try {
             libraryDir = Files.createTempDirectory("ktv-lib");
+            formalLibraryDir = Files.createTempDirectory("ktv-formal-lib");
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -57,6 +59,7 @@ class LibraryScanIntegrationTest {
         registry.add("spring.flyway.enabled", () -> "true");
         registry.add("app.source-library-path", () -> libraryDir.toString());
         registry.add("app.ktv-library-path", () -> libraryDir.toString());
+        registry.add("app.formal-library-path", () -> formalLibraryDir.toString());
         registry.add("app.data-path", () -> libraryDir.resolve("_data").toString());
     }
 
@@ -83,8 +86,8 @@ class LibraryScanIntegrationTest {
                 "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
                 libraryDir.resolve("刘若英 - 后来.mp3").toString());
 
-        // 结构化文件名 + 歌手父目录，用于验证直接扫描 /music 时的 artistHint。
-        Path artistDir = Files.createDirectories(libraryDir.resolve("A-Lin"));
+        // 结构化文件名 + 歌手父目录，用于验证只读正式曲库扫描时的 artistHint。
+        Path artistDir = Files.createDirectories(formalLibraryDir.resolve("A-Lin"));
         run("ffmpeg", "-y",
                 "-f", "lavfi", "-i", "sine=frequency=660:duration=2",
                 artistDir.resolve("A-Lin-给我一个理由忘记-国语-流行.mp3").toString());
@@ -137,10 +140,10 @@ class LibraryScanIntegrationTest {
     }
 
     @Test
-    void directLibraryScanUsesParentFolderAsArtistHintWithoutMovingFile() {
+    void directFormalLibraryScanUsesParentFolderAsArtistHintWithoutMovingFile() {
         assumeTrue(ffmpegAvailable, "ffmpeg 不可用，跳过");
 
-        Path media = libraryDir.resolve("A-Lin")
+        Path media = formalLibraryDir.resolve("A-Lin")
                 .resolve("A-Lin-给我一个理由忘记-国语-流行.mp3");
         scanService.scanAll();
 
