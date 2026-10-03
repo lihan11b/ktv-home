@@ -1,0 +1,69 @@
+name: Custom KTV image
+
+on:
+  push:
+    branches:
+      - custom/mkv-filename-metadata
+    paths:
+      - "backend/**"
+      - "h5/**"
+      - "dist/**"
+      - ".github/workflows/custom-image.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: ghcr.io/lihan11b/ktv-home
+  UPSTREAM_TV_VERSION: "1.0.6"
+  CUSTOM_RELEASE_VERSION: "1.0.6-mkv-metadata"
+
+jobs:
+  image:
+    name: Build linux/amd64 custom image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stage upstream TV APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/tv-apk
+          base="https://github.com/zhayinggang/ktv-home/releases/download/v${UPSTREAM_TV_VERSION}"
+          curl -fL --retry 3 \
+            "$base/home-ktv-tv-${UPSTREAM_TV_VERSION}-armeabi-v7a.apk" \
+            -o "dist/tv-apk/home-ktv-tv-${CUSTOM_RELEASE_VERSION}-armeabi-v7a.apk"
+          curl -fL --retry 3 \
+            "$base/home-ktv-tv-${UPSTREAM_TV_VERSION}-arm64-v8a.apk" \
+            -o "dist/tv-apk/home-ktv-tv-${CUSTOM_RELEASE_VERSION}-arm64-v8a.apk"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push custom server image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            KTV_RELEASE_VERSION=${{ env.CUSTOM_RELEASE_VERSION }}
+            KTV_RELEASE_VERSION_CODE=${{ github.run_number }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:mkv-metadata
+            ${{ env.IMAGE_NAME }}:mkv-metadata-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/lihan11b/ktv-home
+            org.opencontainers.image.description=Home KTV with structured filename metadata parsing
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
