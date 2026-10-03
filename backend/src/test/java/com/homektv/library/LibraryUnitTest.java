@@ -77,6 +77,38 @@ class LibraryUnitTest {
         assertThat(m4.title()).isNotBlank();
     }
 
+    @Test
+    void structuredKtvFilenameParsing() {
+        FilenameParser.ExtendedMeta m1 = FilenameParser.parseExtended(
+                "蔡卓妍-心如蝶舞-国语-流行.mkv", "蔡卓妍");
+        assertThat(m1.recognized()).isTrue();
+        assertThat(m1.artist()).isEqualTo("蔡卓妍");
+        assertThat(m1.title()).isEqualTo("心如蝶舞");
+        assertThat(m1.language()).isEqualTo("国语");
+        assertThat(m1.tags()).containsExactly("流行");
+
+        FilenameParser.ExtendedMeta m2 = FilenameParser.parseExtended(
+                "张学友-吻别-Live-国语-流行.mkv", "张学友");
+        assertThat(m2.artist()).isEqualTo("张学友");
+        assertThat(m2.title()).isEqualTo("吻别-Live");
+        assertThat(m2.language()).isEqualTo("国语");
+        assertThat(m2.tags()).containsExactly("流行");
+
+        FilenameParser.ExtendedMeta m3 = FilenameParser.parseExtended(
+                "A-Lin-给我一个理由忘记-国语-流行.mkv", "A-Lin");
+        assertThat(m3.artist()).isEqualTo("A-Lin");
+        assertThat(m3.title()).isEqualTo("给我一个理由忘记");
+        assertThat(m3.language()).isEqualTo("国语");
+        assertThat(m3.tags()).containsExactly("流行");
+
+        FilenameParser.ExtendedMeta fallback = FilenameParser.parseExtended(
+                "Beyond - 海阔天空.mkv", null);
+        assertThat(fallback.artist()).isEqualTo("Beyond");
+        assertThat(fallback.title()).isEqualTo("海阔天空");
+        assertThat(fallback.language()).isNull();
+        assertThat(fallback.tags()).isEmpty();
+    }
+
     // ---- P1.4 歌词类型 ----
     @Test
     void lyricTypeDetection() {
