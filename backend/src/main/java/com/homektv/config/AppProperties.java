@@ -16,6 +16,9 @@ public class AppProperties {
     /** TV 实际播放曲库目录（容器内 /music）。TV playback music library directory (inside container: /music). */
     private String ktvLibraryPath = "/music";
 
+    /** 外部正式曲库只读挂载目录（容器内 /formal-library）。External read-only formal library. */
+    private String formalLibraryPath = "/formal-library";
+
     /** 数据缓存目录（封面/歌词）。Data cache directory (covers/lyrics). */
     private String dataPath = "./data";
 
@@ -38,6 +41,8 @@ public class AppProperties {
     public void setSourceLibraryPath(String sourceLibraryPath) { this.sourceLibraryPath = sourceLibraryPath; }
     public String getKtvLibraryPath() { return ktvLibraryPath; }
     public void setKtvLibraryPath(String ktvLibraryPath) { this.ktvLibraryPath = ktvLibraryPath; }
+    public String getFormalLibraryPath() { return formalLibraryPath; }
+    public void setFormalLibraryPath(String formalLibraryPath) { this.formalLibraryPath = formalLibraryPath; }
     public String getDataPath() { return dataPath; }
     public void setDataPath(String dataPath) { this.dataPath = dataPath; }
     public String getFfprobePath() { return ffprobePath; }
