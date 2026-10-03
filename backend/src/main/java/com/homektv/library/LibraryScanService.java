@@ -130,29 +130,28 @@ public class LibraryScanService {
 
     private ScanResult scanAllInternal(boolean reportProgress) {
         OffsetDateTime startedAt = OffsetDateTime.now();
-        Path root = Path.of(props.getKtvLibraryPath());
-        if (!Files.isDirectory(root)) {
-            log.warn("曲库目录不存在：{}", root);
-            if (reportProgress) {
-                libraryScanProgress.set(new LibraryScanProgress(
-                        false, 0, 0, null, 0, 0, 0, 0, startedAt, OffsetDateTime.now()));
+        List<Path> roots = libraryRoots();
+
+        LinkedHashSet<Path> discovered = new LinkedHashSet<>();
+        for (Path root : roots) {
+            if (!Files.isDirectory(root)) {
+                log.info("现有曲库目录不存在或未挂载，跳过：{}", root);
+                continue;
             }
-            return new ScanResult(0, 0, 0, 0, 0);
+            try {
+                Files.walkFileTree(root, new SimpleFileVisitor<>() {
+                    @Override
+                    public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                        if (isMediaFile(file)) discovered.add(file.toAbsolutePath().normalize());
+                        return FileVisitResult.CONTINUE;
+                    }
+                });
+            } catch (IOException e) {
+                log.error("遍历曲库失败：{} - {}", root, e.getMessage());
+            }
         }
 
-        List<Path> files = new ArrayList<>();
-        try {
-            Files.walkFileTree(root, new SimpleFileVisitor<>() {
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                    if (isMediaFile(file)) files.add(file);
-                    return FileVisitResult.CONTINUE;
-                }
-            });
-        } catch (IOException e) {
-            log.error("遍历曲库失败：{}", e.getMessage());
-        }
-
+        List<Path> files = new ArrayList<>(discovered);
         int added = 0, updated = 0, skipped = 0, unrecognized = 0;
         if (reportProgress) {
             libraryScanProgress.set(new LibraryScanProgress(
@@ -161,10 +160,10 @@ public class LibraryScanService {
 
         for (int index = 0; index < files.size(); index++) {
             Path file = files.get(index);
-            String relative = root.relativize(file).toString();
+            String displayPath = displayScanPath(file, roots);
             if (reportProgress) {
                 libraryScanProgress.set(new LibraryScanProgress(
-                        true, files.size(), index, relative,
+                        true, files.size(), index, displayPath,
                         added, updated, skipped, unrecognized, startedAt, null));
             }
             try {
@@ -181,7 +180,7 @@ public class LibraryScanService {
             }
             if (reportProgress) {
                 libraryScanProgress.set(new LibraryScanProgress(
-                        true, files.size(), index + 1, relative,
+                        true, files.size(), index + 1, displayPath,
                         added, updated, skipped, unrecognized, startedAt, null));
             }
         }
@@ -192,9 +191,31 @@ public class LibraryScanService {
                     false, files.size(), files.size(), null,
                     added, updated, skipped, unrecognized, startedAt, OffsetDateTime.now()));
         }
-        log.info("扫描完成：共 {} 文件，新增 {}，更新 {}，跳过 {}，未识别 {}",
-                files.size(), added, updated, skipped, unrecognized);
+        log.info("现有曲库扫描完成：根目录 {}，共 {} 文件，新增 {}，更新 {}，跳过 {}，未识别 {}",
+                roots, files.size(), added, updated, skipped, unrecognized);
         return result;
+    }
+
+    private List<Path> libraryRoots() {
+        LinkedHashSet<Path> roots = new LinkedHashSet<>();
+        addLibraryRoot(roots, props.getKtvLibraryPath());
+        addLibraryRoot(roots, props.getFormalLibraryPath());
+        return new ArrayList<>(roots);
+    }
+
+    private static void addLibraryRoot(Set<Path> roots, String configuredPath) {
+        if (configuredPath == null || configuredPath.isBlank()) return;
+        roots.add(Path.of(configuredPath).toAbsolutePath().normalize());
+    }
+
+    private static String displayScanPath(Path file, List<Path> roots) {
+        for (Path root : roots) {
+            if (file.startsWith(root)) {
+                Path relative = root.relativize(file);
+                return root + (relative.toString().isBlank() ? "" : File.separator + relative);
+            }
+        }
+        return file.toString();
     }
 
     enum IngestOutcome { ADDED, UPDATED, SKIPPED, UNRECOGNIZED }
