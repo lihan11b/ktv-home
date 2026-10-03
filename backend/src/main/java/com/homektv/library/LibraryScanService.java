@@ -152,6 +152,11 @@ public class LibraryScanService {
         String sidecarLyricText = readValidSidecarLyric(sidecarLyric);
         String lrcTitle = lrcTag(sidecarLyricText, "ti");
         String lrcArtist = lrcTag(sidecarLyricText, "ar");
+        String artistHint = sourceFile != null && sourceFile.getParent() != null
+                ? sourceFile.getParent().getFileName().toString()
+                : null;
+        FilenameParser.ExtendedMeta filenameMeta =
+                FilenameParser.parseExtended(file.getFileName().toString(), artistHint);
         boolean recognized;
         String title, artist;
         String identitySource;
@@ -171,10 +176,9 @@ public class LibraryScanService {
             recognized = true;
             identitySource = "lrc_tag";
         } else {
-            ParsedMeta pm = FilenameParser.parse(file.getFileName().toString());
-            title = pm.title();
-            artist = pm.artist();
-            recognized = pm.recognized();
+            title = filenameMeta.title();
+            artist = filenameMeta.artist();
+            recognized = filenameMeta.recognized();
             identitySource = "filename";
         }
         if (artist == null || artist.isBlank()) artist = "未知歌手";
@@ -209,6 +213,8 @@ public class LibraryScanService {
             song.setStatus(recognized ? "ok" : "unrecognized");
             if (tag.getLanguage() != null && !tag.getLanguage().isBlank()) song.setLanguage(normalizeLanguage(tag.getLanguage()));
             else if (probe.language() != null && !probe.language().isBlank()) song.setLanguage(normalizeLanguage(probe.language()));
+            else if (filenameMeta.language() != null && !filenameMeta.language().isBlank()) song.setLanguage(normalizeLanguage(filenameMeta.language()));
+            if (filenameMeta.tags().length > 0) song.setTags(filenameMeta.tags());
             song.setMetadataProvenance("{\"title\":{\"source\":\"" + identitySource + "\"},\"artist\":{\"source\":\"" + identitySource + "\"}}");
             song.setNeedsAiOptimization(!recognized || "未知".equals(song.getLanguage()) || "未知歌手".equals(song.getArtist()));
             isNew = true;
