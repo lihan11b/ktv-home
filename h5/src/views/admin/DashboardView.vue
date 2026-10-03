@@ -9,17 +9,17 @@
       <div class="track"><i :style="{width:`${scanPercent}%`}"></i></div>
       <div class="progress-meta"><span>已处理 {{ scanProgress.completed || 0 }} / {{ scanProgress.total || 0 }}</span><span>直接移动 {{ scanProgress.copied || 0 }}</span><span>待转码 {{ scanProgress.pendingTranscode || 0 }}</span><span>重复 {{ duplicateCount }}</span><span>未识别 {{ scanProgress.unrecognized || 0 }}</span><span :class="{'failed':scanProgress.failed}">失败 {{ scanProgress.failed || 0 }}</span></div>
     </section>
-    <!-- 现有曲库索引进度：只读取 /music，不移动媒体文件 -->
+    <!-- 现有曲库索引进度：只读取 /music 与 /formal-library，不移动媒体文件 -->
     <section v-if="libraryScanning || libraryScanResult" class="scan-progress" :class="{complete:!libraryScanning}">
-      <div class="progress-head"><div><strong>{{ libraryScanning ? '正在扫描现有曲库' : '现有曲库扫描完成' }}</strong><span v-if="libraryScanning">{{ libraryScanProgress.currentFile || '正在读取 /music 文件列表…' }}</span><span v-else>{{ libraryScanResult.finishedAt ? `完成于 ${formatTime(libraryScanResult.finishedAt)}` : '' }}</span></div><b>{{ libraryScanPercent }}%</b></div>
+      <div class="progress-head"><div><strong>{{ libraryScanning ? '正在扫描现有曲库' : '现有曲库扫描完成' }}</strong><span v-if="libraryScanning">{{ libraryScanProgress.currentFile || '正在读取曲库文件列表…' }}</span><span v-else>{{ libraryScanResult.finishedAt ? `完成于 ${formatTime(libraryScanResult.finishedAt)}` : '' }}</span></div><b>{{ libraryScanPercent }}%</b></div>
       <div class="track"><i :style="{width:`${libraryScanPercent}%`}"></i></div>
       <div class="progress-meta"><span>已处理 {{ libraryScanProgress.completed || 0 }} / {{ libraryScanProgress.total || 0 }}</span><span>新增 {{ libraryScanProgress.added || 0 }}</span><span>更新 {{ libraryScanProgress.updated || 0 }}</span><span>跳过 {{ libraryScanProgress.skipped || 0 }}</span><span>未识别 {{ libraryScanProgress.unrecognized || 0 }}</span></div>
-      <div class="safe-note">只读取 /music 并建立或更新索引；不会移动、复制或转码媒体文件。</div>
+      <div class="safe-note">只读取 /music 与 /formal-library 并建立或更新索引；不会移动、复制或转码媒体文件。</div>
     </section>
     <!-- 运行状态面板 / Status panel -->
     <section class="panel"><div class="panel-head"><strong>运行状态</strong><button class="text-btn" @click="load">刷新</button></div><table><thead><tr><th>模块</th><th>当前状态</th><th>详情</th><th>操作</th></tr></thead><tbody>
       <tr><td><strong>源路径扫描</strong><small>分析、去重、兼容文件直接移动入库</small></td><td><span class="status green">{{ scanning ? '扫描中' : '就绪' }}</span></td><td>兼容文件扫描后移入 KTV 曲库；需转码文件只进入待处理列表。</td><td><button class="link" @click="scan" :disabled="scanning || libraryScanning">重新扫描</button></td></tr>
-      <tr><td><strong>现有曲库扫描</strong><small>/music，只建立索引</small></td><td><span class="status" :class="libraryScanning?'blue':'green'">{{ libraryScanning ? '扫描中' : '就绪' }}</span></td><td>递归读取 /music（包括只读挂载目录），更新歌曲索引，不移动、复制或转码媒体文件。</td><td><button class="link" @click="scanLibrary" :disabled="scanning || libraryScanning">扫描现有曲库</button></td></tr>
+      <tr><td><strong>现有曲库扫描</strong><small>/music + /formal-library，只建立索引</small></td><td><span class="status" :class="libraryScanning?'blue':'green'">{{ libraryScanning ? '扫描中' : '就绪' }}</span></td><td>递归读取 /music 与独立只读挂载的 /formal-library，更新歌曲索引，不移动、复制或转码媒体文件。</td><td><button class="link" @click="scanLibrary" :disabled="scanning || libraryScanning">扫描现有曲库</button></td></tr>
       <tr><td><strong>批量转码</strong><small>原始音乐管理任务</small></td><td><span class="status" :class="progress.running?'blue':'neutral'">{{ progress.running ? '进行中' : '空闲' }}</span></td><td>{{ progress.running ? `${progress.completed}/${progress.total}，当前：${progress.currentFile || '准备中'}` : lastProgressText }}</td><td><router-link class="link" :to="{name:'admin-source-library'}">查看进度</router-link></td></tr>
       <tr><td><strong>播放服务</strong><small>TV 与手机点歌</small></td><td><span class="status green">{{ queueState }}</span></td><td>当前连接 {{ d.connectedClients ?? 0 }} 台客户端，正式曲库 KTV {{ d.ktvCount||0 }} / MV {{ d.mvCount||0 }} / 音频 {{ d.audioCount||0 }}。</td><td><router-link class="link" :to="{name:'admin-ktv-library'}">管理曲库</router-link></td></tr>
     </tbody></table></section>
