@@ -29,6 +29,7 @@ public final class FilenameParser {
      * 结构化 KTV 文件名解析结果。
      *
      * 支持「歌手-歌名-语种-类型」；若歌名自身含连字符，则保留中间全部段为歌名。
+     * 多歌手可在歌手字段内使用下划线，例如「周柏豪_蔡卓妍-请你爱我-粤语-合唱」。
      * artistHint 通常来自源文件父目录，用于正确处理 A-Lin 等歌手名本身含连字符的情况。
      */
     public record ExtendedMeta(String title, String artist, String language, String[] tags, boolean recognized) {
@@ -74,7 +75,7 @@ public final class FilenameParser {
      * 解析「歌手-歌名-语种-类型」命名；不匹配时完整回退到原有解析规则。
      */
     public static ExtendedMeta parseExtended(String filename, String artistHint) {
-        String normalized = normalizeBase(filename);
+        String normalized = normalizeStructuredBase(filename);
         if (normalized.isBlank()) {
             ParsedMeta fallback = ParsedMeta.unrecognized(normalized);
             return fallback(fallback);
@@ -139,7 +140,24 @@ public final class FilenameParser {
 
     private static String normalizeArtistHint(String artistHint) {
         if (artistHint == null) return "";
-        return normalizeSeparators(artistHint).replaceAll("\\s*-\\s*", "-").trim();
+        return normalizeStructuredSeparators(artistHint).replaceAll("\\s*-\\s*", "-").trim();
+    }
+
+    /**
+     * Structured KTV names use '-' between fields while '_' may belong to a multi-artist field.
+     * Do not collapse '_' to '-' here; otherwise "周柏豪_蔡卓妍-歌名-粤语-合唱" would
+     * incorrectly become artist=周柏豪, title=蔡卓妍-歌名.
+     */
+    private static String normalizeStructuredBase(String filename) {
+        String base = stripExtension(filename).trim();
+        if (base.isBlank()) return base;
+
+        base = base.replaceFirst("^\\s*\\d{1,5}\\s*[-._)】]\\s*", "");
+        base = base.replaceAll("\\s*\\[(?:KTV|MTV|MV|LIVE|伴奏|原唱|消音|卡拉OK)\\]\\s*$", "");
+        base = base.replaceAll("\\s*\\((?:KTV|MTV|MV|LIVE|伴奏|原唱|消音|卡拉OK|Official Video)\\)\\s*$", "");
+        base = base.replaceAll("(?i)\\s*[-|]\\s*(KTV|MTV|MV|LIVE|伴奏|原唱|消音|卡拉OK)\\s*$", "");
+
+        return normalizeStructuredSeparators(base);
     }
 
     private static String normalizeBase(String filename) {
@@ -155,13 +173,17 @@ public final class FilenameParser {
         return normalizeSeparators(base);
     }
 
-    private static String normalizeSeparators(String value) {
+    private static String normalizeStructuredSeparators(String value) {
         return value
                 .replace('－', '-')   // 全角连字符
                 .replace('—', '-')    // 破折号
-                .replace('_', '-')
                 .replace('–', '-')
                 .replace('｜', '|');
+    }
+
+    private static String normalizeSeparators(String value) {
+        return normalizeStructuredSeparators(value)
+                .replace('_', '-');
     }
 
     private static String[] splitByDash(String s) {

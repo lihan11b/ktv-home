@@ -101,12 +101,41 @@ class LibraryUnitTest {
         assertThat(m3.language()).isEqualTo("国语");
         assertThat(m3.tags()).containsExactly("流行");
 
+        // 多歌手字段中的 '_' 属于歌手名，不应被当成结构化字段分隔符。
+        FilenameParser.ExtendedMeta duet1 = FilenameParser.parseExtended(
+                "周柏豪_蔡卓妍-请你爱我-粤语-合唱.mkv", "蔡卓妍");
+        assertThat(duet1.recognized()).isTrue();
+        assertThat(duet1.artist()).isEqualTo("周柏豪_蔡卓妍");
+        assertThat(duet1.title()).isEqualTo("请你爱我");
+        assertThat(duet1.language()).isEqualTo("粤语");
+        assertThat(duet1.tags()).containsExactly("合唱");
+
+        FilenameParser.ExtendedMeta duet2 = FilenameParser.parseExtended(
+                "蔡卓妍_马天佑-亲爱的你好吗-国语-合唱.mkv", "蔡卓妍");
+        assertThat(duet2.artist()).isEqualTo("蔡卓妍_马天佑");
+        assertThat(duet2.title()).isEqualTo("亲爱的你好吗");
+        assertThat(duet2.language()).isEqualTo("国语");
+        assertThat(duet2.tags()).containsExactly("合唱");
+
+        FilenameParser.ExtendedMeta duet3 = FilenameParser.parseExtended(
+                "张继聪_蔡卓妍-不死-粤语-合唱.mkv", null);
+        assertThat(duet3.artist()).isEqualTo("张继聪_蔡卓妍");
+        assertThat(duet3.title()).isEqualTo("不死");
+        assertThat(duet3.language()).isEqualTo("粤语");
+        assertThat(duet3.tags()).containsExactly("合唱");
+
         FilenameParser.ExtendedMeta fallback = FilenameParser.parseExtended(
                 "Beyond - 海阔天空.mkv", null);
         assertThat(fallback.artist()).isEqualTo("Beyond");
         assertThat(fallback.title()).isEqualTo("海阔天空");
         assertThat(fallback.language()).isNull();
         assertThat(fallback.tags()).isEmpty();
+
+        // 非结构化旧命名仍保持原逻辑：artist_title 可回退为 artist-title。
+        FilenameParser.ExtendedMeta legacyUnderscore = FilenameParser.parseExtended(
+                "周杰伦_晴天.mkv", null);
+        assertThat(legacyUnderscore.artist()).isEqualTo("周杰伦");
+        assertThat(legacyUnderscore.title()).isEqualTo("晴天");
     }
 
     // ---- P1.4 歌词类型 ----
