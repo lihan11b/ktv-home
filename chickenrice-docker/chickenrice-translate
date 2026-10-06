@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+APP_DIR="/app"
+MODELS_DIR="${CHICKENRICE_MODELS_DIR:-/app/models}"
+INPUT_DIR="${CHICKENRICE_INPUT_DIR:-/input}"
+OUTPUT_DIR="${CHICKENRICE_OUTPUT_DIR:-/output}"
+MODEL_DIR="${CHICKENRICE_MODEL_DIR:-${MODELS_DIR}/whisper-large-v2-translate-zh-v0.2-st-ct2}"
+
+COMPUTE_TYPE="${CHICKENRICE_COMPUTE_TYPE:-int8}"
+SUB_FORMATS="${CHICKENRICE_SUB_FORMATS:-srt,vtt,lrc}"
+AUDIO_SUFFIXES="${CHICKENRICE_AUDIO_SUFFIXES:-mp3,wav,flac,m4a,aac,ogg,wma,mp4,mkv,avi,mov,webm,flv,wmv}"
+LOG_LEVEL="${CHICKENRICE_LOG_LEVEL:-INFO}"
+GENERATION_CONFIG="${CHICKENRICE_GENERATION_CONFIG:-${APP_DIR}/generation_config.json5}"
+AUTO_DOWNLOAD_MODELS="${CHICKENRICE_AUTO_DOWNLOAD_MODELS:-true}"
+
+mkdir -p "${MODELS_DIR}" "${OUTPUT_DIR}"
+
+common_models_ready() {
+  [[ -f "${MODELS_DIR}/whisper_vad.onnx" ]] &&
+  [[ -f "${MODELS_DIR}/whisper_vad_metadata.json" ]] &&
+  [[ -f "${MODELS_DIR}/whisper-base/preprocessor_config.json" ]] &&
+  [[ -f "${MODELS_DIR}/whisper-base/config.json" ]]
+}
+
+main_model_ready() {
+  [[ -d "${MODEL_DIR}" ]] || return 1
+  [[ -f "${MODEL_DIR}/config.json" ]] || return 1
+  [[ -f "${MODEL_DIR}/model.bin" || -f "${MODEL_DIR}/model.safetensors" || -f "${MODEL_DIR}/pytorch_model.bin" ]]
+}
+
+all_models_ready() {
+  common_models_ready && main_model_ready
+}
+
+show_model_status() {
+  for f in \
+    "${MODELS_DIR}/whisper_vad.onnx" \
+    "${MODELS_DIR}/whisper_vad_metadata.json" \
+    "${MODELS_DIR}/whisper-base/preprocessor_config.json" \
+    "${MODELS_DIR}/whisper-base/config.json"
+  do
+    [[ -f "$f" ]] && echo "OK      $f" || echo "MISSING $f"
+  done
+  if main_model_ready; then
+    echo "OK      ${MODEL_DIR}"
+  elif [[ -d "${MODEL_DIR}" ]]; then
+    echo "INCOMPLETE ${MODEL_DIR}"
+  else
+    echo "MISSING ${MODEL_DIR}"
+  fi
+}
+
+download_models() {
+  echo "============================================================"
+  echo "Downloading ChickenRice Translate model set..."
+  echo "Target: ${MODELS_DIR}"
+  echo " - voice-optimized Whisper VAD"
+  echo " - whisper-base feature extractor"
+  echo " - 海南鸡 v2 5000小时 Japanese -> Chinese model"
+  echo "============================================================"
+  cd "${APP_DIR}"
+  python download_models.py \
+    --hf-model chickenrice0721/whisper-large-v2-translate-zh-v0.2-st-ct2 \
+    --target-dir whisper-large-v2-translate-zh-v0.2-st-ct2
+  if ! all_models_ready; then
+    echo "ERROR: model download completed but required files are incomplete." >&2
+    show_model_status >&2
+    return 1
+  fi
+  echo "All required Translate models are ready."
+}
+
+auto_download_enabled() {
+  [[ "${AUTO_DOWNLOAD_MODELS}" =~ ^(1|true|TRUE|yes|YES|on|ON)$ ]]
+}
+
+maybe_auto_download_models() {
+  if all_models_ready; then
+    echo "ChickenRice Translate models already present; skipping download."
+  elif auto_download_enabled; then
+    download_models
+  else
+    echo "WARNING: required models are missing and automatic download is disabled." >&2
+  fi
+}
+
+run_translate() {
+  if ! all_models_ready; then
+    if auto_download_enabled; then
+      download_models
+    else
+      echo "Required Translate models are missing or incomplete." >&2
+      exit 2
+    fi
+  fi
+
+  if [[ "$#" -eq 0 ]]; then
+    set -- "${INPUT_DIR}"
+  fi
+
+  overwrite_args=()
+  case "${CHICKENRICE_OVERWRITE:-false}" in
+    1|true|TRUE|yes|YES|on|ON) overwrite_args+=(--overwrite) ;;
+  esac
+
+  cd "${APP_DIR}"
+  exec python infer.py \
+    --device cpu \
+    --compute_type "${COMPUTE_TYPE}" \
+    --model_name_or_path "${MODEL_DIR}" \
+    --task translate \
+    --generation_config "${GENERATION_CONFIG}" \
+    --audio_suffixes "${AUDIO_SUFFIXES}" \
+    --sub_formats "${SUB_FORMATS}" \
+    --output_dir "${OUTPUT_DIR}" \
+    --log_level "${LOG_LEVEL}" \
+    "${overwrite_args[@]}" \
+    "$@"
+}
+
+usage() {
+  cat <<'EOF'
+Commands:
+  chickenrice-translate doctor
+  chickenrice-translate translate "/input/test.mkv"
+  chickenrice-translate translate /input
+  chickenrice-translate download-models
+EOF
+}
+
+cmd="${1:-idle}"
+shift || true
+
+case "${cmd}" in
+  idle)
+    maybe_auto_download_models
+    echo "ChickenRice Translate container is ready."
+    exec sleep infinity
+    ;;
+  download-models)
+    download_models
+    ;;
+  doctor)
+    echo "== Python =="; python --version
+    echo "== ffmpeg =="; ffmpeg -version | head -n 1
+    echo "== CTranslate2 =="
+    python - <<'PY'
+import ctranslate2
+print("version:", getattr(ctranslate2, "__version__", "unknown"))
+print("CPU compute types:", sorted(ctranslate2.get_supported_compute_types("cpu")))
+PY
+    echo "== ONNX Runtime =="
+    python - <<'PY'
+import onnxruntime as ort
+print("version:", ort.__version__)
+print("providers:", ort.get_available_providers())
+PY
+    echo "== Model status =="
+    show_model_status
+    ;;
+  translate)
+    run_translate "$@"
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  *)
+    echo "Unknown command: ${cmd}" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
