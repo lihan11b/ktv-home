@@ -1,0 +1,36 @@
+name: chickenrice-translate
+
+services:
+  chickenrice:
+    image: ghcr.io/lihan11b/chickenrice-translate-cpu:62104884-cpu-v1
+    container_name: chickenrice-translate
+    platform: linux/amd64
+
+    environment:
+      TZ: Asia/Shanghai
+      OMP_NUM_THREADS: "8"
+      MKL_NUM_THREADS: "8"
+      OPENBLAS_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "8"
+      CHICKENRICE_COMPUTE_TYPE: int8
+      CHICKENRICE_SUB_FORMATS: srt,vtt,lrc
+      CHICKENRICE_LOG_LEVEL: INFO
+      CHICKENRICE_OVERWRITE: "false"
+      CHICKENRICE_AUTO_DOWNLOAD_MODELS: "true"
+
+    volumes:
+      - type: bind
+        source: "/tmp/zfsv3/REPLACE_ME/ChickenRice/input"
+        target: /input
+        read_only: true
+
+      - type: bind
+        source: "/tmp/zfsv3/REPLACE_ME/ChickenRice/output"
+        target: /output
+
+      - type: bind
+        source: "/tmp/zfsv3/REPLACE_ME/ChickenRice/models"
+        target: /app/models
+
+    restart: unless-stopped
+    stop_grace_period: 30s
