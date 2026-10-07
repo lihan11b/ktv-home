@@ -1,0 +1,54 @@
+name: facefusion-openvino
+
+services:
+  facefusion:
+    image: ghcr.io/lihan11b/facefusion-openvino:3.9.1-ov2025.4.1
+    container_name: facefusion-openvino
+    platform: linux/amd64
+
+    ports:
+      - "7865:7860"
+
+    devices:
+      - /dev/dri/renderD128:/dev/dri/renderD128
+
+    group_add:
+      - "992"
+
+    environment:
+      TZ: Asia/Shanghai
+      FACEFUSION_EXECUTION_THREAD_COUNT: "2"
+      FACEFUSION_TEMP_PATH: /temp
+      FACEFUSION_JOBS_PATH: /facefusion/.jobs
+
+    volumes:
+      - type: bind
+        source: "/tmp/zfsv3/sata1/13488873316/data/Docker/FaceFusion/assets"
+        target: /facefusion/.assets
+
+      - type: bind
+        source: "/tmp/zfsv3/sata1/13488873316/data/Docker/FaceFusion/caches"
+        target: /facefusion/.caches
+
+      - type: bind
+        source: "/tmp/zfsv3/sata1/13488873316/data/Docker/FaceFusion/jobs"
+        target: /facefusion/.jobs
+
+      - type: bind
+        source: "/tmp/zfsv3/sata1/13488873316/data/Docker/FaceFusion/input"
+        target: /input
+        read_only: true
+
+      - type: bind
+        source: "/tmp/zfsv3/sata1/13488873316/data/Docker/FaceFusion/output"
+        target: /output
+
+      - type: bind
+        source: "/tmp/zfsv3/sata1/13488873316/data/Docker/FaceFusion/temp"
+        target: /temp
+
+    security_opt:
+      - no-new-privileges:true
+
+    restart: unless-stopped
+    stop_grace_period: 30s
