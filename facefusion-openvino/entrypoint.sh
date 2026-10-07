@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -eo pipefail
 
 if [[ -f /opt/intel/openvino/setupvars.sh ]]; then
-  # Required so the OpenVINO 2025.4 runtime and GPU plugin from the base image
-  # are visible to ONNX Runtime OpenVINO EP.
+  set +u
   source /opt/intel/openvino/setupvars.sh >/dev/null
 fi
+
+set -u
 
 run_preflight() {
   python /usr/local/lib/facefusion-gpu-preflight.py
